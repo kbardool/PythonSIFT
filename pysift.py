@@ -24,10 +24,15 @@ def computeKeypointsAndDescriptors(image, sigma=1.6, num_intervals=3, assumed_bl
     gaussian_kernels = generateGaussianKernels(sigma, num_intervals)
     gaussian_images = generateGaussianImages(base_image, num_octaves, gaussian_kernels)
     dog_images = generateDoGImages(gaussian_images)
+    
     keypoints = findScaleSpaceExtrema(gaussian_images, dog_images, num_intervals, sigma, image_border_width)
+    
     keypoints = removeDuplicateKeypoints(keypoints)
+    
     keypoints = convertKeypointsToInputImageSize(keypoints)
+    
     descriptors = generateDescriptors(keypoints, gaussian_images)
+    
     return keypoints, descriptors
 
 #########################
@@ -35,11 +40,14 @@ def computeKeypointsAndDescriptors(image, sigma=1.6, num_intervals=3, assumed_bl
 #########################
 
 def generateBaseImage(image, sigma, assumed_blur):
-    """Generate base image from input image by upsampling by 2 in both directions and blurring
+    """
+    Generate base image from input image by upsampling by 2 in both directions and blurring
     """
     logger.debug('Generating base image...')
     image = resize(image, (0, 0), fx=2, fy=2, interpolation=INTER_LINEAR)
+    print(f" resized image: {image.shape}")
     sigma_diff = sqrt(max((sigma ** 2) - ((2 * assumed_blur) ** 2), 0.01))
+    print(f" sigma diff: {sigma_diff}")
     return GaussianBlur(image, (0, 0), sigmaX=sigma_diff, sigmaY=sigma_diff)  # the image blur is now sigma instead of assumed_blur
 
 def computeNumberOfOctaves(image_shape):
@@ -118,7 +126,8 @@ def findScaleSpaceExtrema(gaussian_images, dog_images, num_intervals, sigma, ima
     return keypoints
 
 def isPixelAnExtremum(first_subimage, second_subimage, third_subimage, threshold):
-    """Return True if the center element of the 3x3x3 input array is strictly greater than or less than all its neighbors, False otherwise
+    """
+    Return True if the center element of the 3x3x3 input array is strictly greater than or less than all its neighbors, False otherwise
     """
     center_pixel_value = second_subimage[1, 1]
     if abs(center_pixel_value) > threshold:
@@ -138,12 +147,23 @@ def isPixelAnExtremum(first_subimage, second_subimage, third_subimage, threshold
                    center_pixel_value <= second_subimage[1, 2]
     return False
 
-def localizeExtremumViaQuadraticFit(i, j, image_index, octave_index, num_intervals, dog_images_in_octave, sigma, contrast_threshold, image_border_width, eigenvalue_ratio=10, num_attempts_until_convergence=5):
-    """Iteratively refine pixel positions of scale-space extrema via quadratic fit around each extremum's neighbors
+def localizeExtremumViaQuadraticFit(i, j, 
+                                    image_index, 
+                                    octave_index, 
+                                    num_intervals, 
+                                    dog_images_in_octave, 
+                                    sigma, 
+                                    contrast_threshold, 
+                                    image_border_width, 
+                                    eigenvalue_ratio=10, 
+                                    num_attempts_until_convergence=5):
+    """
+    Iteratively refine pixel positions of scale-space extrema via quadratic fit around each extremum's neighbors
     """
     logger.debug('Localizing scale-space extrema...')
     extremum_is_outside_image = False
     image_shape = dog_images_in_octave[0].shape
+    
     for attempt_index in range(num_attempts_until_convergence):
         # need to convert from uint8 to float32 to compute derivatives and need to rescale pixel values to [0, 1] to apply Lowe's thresholds
         first_image, second_image, third_image = dog_images_in_octave[image_index-1:image_index+2]
@@ -162,13 +182,17 @@ def localizeExtremumViaQuadraticFit(i, j, image_index, octave_index, num_interva
         if i < image_border_width or i >= image_shape[0] - image_border_width or j < image_border_width or j >= image_shape[1] - image_border_width or image_index < 1 or image_index > num_intervals:
             extremum_is_outside_image = True
             break
+            
     if extremum_is_outside_image:
         logger.debug('Updated extremum moved outside of image before reaching convergence. Skipping...')
         return None
+        
     if attempt_index >= num_attempts_until_convergence - 1:
         logger.debug('Exceeded maximum number of attempts without reaching convergence for this extremum. Skipping...')
         return None
+        
     functionValueAtUpdatedExtremum = pixel_cube[1, 1, 1] + 0.5 * dot(gradient, extremum_update)
+    
     if abs(functionValueAtUpdatedExtremum) * num_intervals >= contrast_threshold:
         xy_hessian = hessian[:2, :2]
         xy_hessian_trace = trace(xy_hessian)
